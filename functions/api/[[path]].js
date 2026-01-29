@@ -33,23 +33,33 @@ function generateResetToken() {
   return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-// 发送邮件（Resend API）
+// 发送邮件（Cloudflare MailChannels）
 async function sendEmail(to, subject, html, env) {
-  if (!env.RESEND_API_KEY) {
-    throw new Error('RESEND_API_KEY not configured');
-  }
+  const fromEmail = env.FROM_EMAIL || 'noreply@132024.xyz';
+  const fromName = env.FROM_NAME || 'Simple Todo';
 
-  const response = await fetch('https://api.resend.com/emails', {
+  const response = await fetch('https://api.mailchannels.net/tx/v1/send', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      from: env.FROM_EMAIL || 'noreply@resend.dev',
-      to: [to],
+      personalizations: [
+        {
+          to: [{ email: to }]
+        }
+      ],
+      from: {
+        email: fromEmail,
+        name: fromName
+      },
       subject,
-      html
+      content: [
+        {
+          type: 'text/html',
+          value: html
+        }
+      ]
     })
   });
 
@@ -58,7 +68,7 @@ async function sendEmail(to, subject, html, env) {
     throw new Error(`Email send failed: ${error}`);
   }
 
-  return await response.json();
+  return { success: true };
 }
 
 // CORS 处理

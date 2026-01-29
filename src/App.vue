@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 
-const API_URL = 'https://simple-todo-api.yushengmo.workers.dev'
+const API_URL = '/api'
 
 // 状态
 const isLoggedIn = ref(false)

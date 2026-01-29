@@ -1,4 +1,4 @@
-# Todo List 应用
+# Simple Todo
 
 一个简洁的待办事项应用，使用 Vue 3 + Vite 构建。
 
@@ -11,7 +11,7 @@
 
 ## 在线访问
 
-[Todo List](https://allen8free.github.io/todo-app/)
+[Simple Todo](https://ysmo.github.io/simple-todo/)
 
 ## 本地开发
 

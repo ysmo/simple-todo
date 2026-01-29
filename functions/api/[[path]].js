@@ -26,6 +26,41 @@ async function verifyToken(token) {
   }
 }
 
+// 生成随机令牌
+function generateResetToken() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// 发送邮件（Resend API）
+async function sendEmail(to, subject, html, env) {
+  if (!env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY not configured');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: env.FROM_EMAIL || 'noreply@resend.dev',
+      to: [to],
+      subject,
+      html
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Email send failed: ${error}`);
+  }
+
+  return await response.json();
+}
+
 // CORS 处理
 function corsHeaders() {
   return {
@@ -107,6 +142,122 @@ export async function onRequest(context) {
       const token = await generateToken({ userId: user.id, email: user.email });
 
       return new Response(JSON.stringify({ token, user }), {
+        headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+      });
+    }
+
+    // 忘记密码 - 发送重置链接
+    if (path === '/forgot-password' && method === 'POST') {
+      const { email } = await request.json();
+
+      if (!email) {
+        return new Response(JSON.stringify({ error: '请输入邮箱' }), {
+          status: 400,
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 查找用户
+      const user = await env.DB.prepare(
+        'SELECT id, email FROM users WHERE email = ?'
+      ).bind(email).first();
+
+      // 即使用户不存在也返回成功（安全考虑，不泄露用户是否存在）
+      if (!user) {
+        return new Response(JSON.stringify({ 
+          message: '如果该邮箱已注册，您将收到重置密码的邮件' 
+        }), {
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 生成重置令牌
+      const resetToken = generateResetToken();
+      const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1小时后过期
+
+      // 保存令牌到数据库
+      await env.DB.prepare(
+        'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
+      ).bind(user.id, resetToken, expiresAt).run();
+
+      // 生成重置链接
+      const resetUrl = `https://todo.132024.xyz/reset-password?token=${resetToken}`;
+
+      // 发送邮件
+      const emailHtml = `
+        <h2>重置密码</h2>
+        <p>您好，</p>
+        <p>我们收到了您的密码重置请求。请点击下面的链接重置密码：</p>
+        <p><a href="${resetUrl}" style="display: inline-block; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">重置密码</a></p>
+        <p>或复制此链接到浏览器：</p>
+        <p>${resetUrl}</p>
+        <p>此链接将在 1 小时后失效。</p>
+        <p>如果您没有请求重置密码，请忽略此邮件。</p>
+        <hr>
+        <p style="color: #999; font-size: 12px;">Simple Todo - 简洁的待办事项应用</p>
+      `;
+
+      try {
+        await sendEmail(user.email, '重置密码 - Simple Todo', emailHtml, env);
+      } catch (err) {
+        console.error('Email send error:', err);
+        return new Response(JSON.stringify({ error: '邮件发送失败，请稍后重试' }), {
+          status: 500,
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({ 
+        message: '如果该邮箱已注册，您将收到重置密码的邮件' 
+      }), {
+        headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+      });
+    }
+
+    // 重置密码
+    if (path === '/reset-password' && method === 'POST') {
+      const { token, password } = await request.json();
+
+      if (!token || !password) {
+        return new Response(JSON.stringify({ error: '缺少必要参数' }), {
+          status: 400,
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 验证令牌
+      const resetRecord = await env.DB.prepare(
+        'SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0'
+      ).bind(token).first();
+
+      if (!resetRecord) {
+        return new Response(JSON.stringify({ error: '重置链接无效或已使用' }), {
+          status: 400,
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 检查是否过期
+      const now = Math.floor(Date.now() / 1000);
+      if (resetRecord.expires_at < now) {
+        return new Response(JSON.stringify({ error: '重置链接已过期' }), {
+          status: 400,
+          headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
+        });
+      }
+
+      // 更新密码
+      const passwordHash = await hashPassword(password);
+      await env.DB.prepare(
+        'UPDATE users SET password_hash = ? WHERE id = ?'
+      ).bind(passwordHash, resetRecord.user_id).run();
+
+      // 标记令牌为已使用
+      await env.DB.prepare(
+        'UPDATE password_reset_tokens SET used = 1 WHERE id = ?'
+      ).bind(resetRecord.id).run();
+
+      return new Response(JSON.stringify({ message: '密码重置成功' }), {
         headers: { ...corsHeaders(), 'Content-Type': 'application/json' }
       });
     }

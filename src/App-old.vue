@@ -3,9 +3,6 @@ import { ref, computed, onMounted } from 'vue'
 
 const API_URL = '/api'
 
-// 路由状态
-const currentView = ref('auth') // 'auth' | 'todos' | 'forgot-password' | 'reset-password'
-
 // 状态
 const isLoggedIn = ref(false)
 const token = ref('')
@@ -13,37 +10,21 @@ const user = ref(null)
 const todos = ref([])
 const loading = ref(false)
 const error = ref('')
-const success = ref('')
 
 // 表单
 const showLogin = ref(true) // true=登录, false=注册
 const email = ref('')
 const password = ref('')
-const confirmPassword = ref('')
 const newTodo = ref('')
 
-// URL 参数（用于重置密码）
-const resetToken = ref('')
-
-// 检查登录状态和 URL 参数
+// 检查登录状态
 onMounted(() => {
-  // 检查是否是重置密码页面
-  const params = new URLSearchParams(window.location.search)
-  const token_param = params.get('token')
-  if (token_param) {
-    resetToken.value = token_param
-    currentView.value = 'reset-password'
-    return
-  }
-
-  // 检查登录状态
   const savedToken = localStorage.getItem('token')
   const savedUser = localStorage.getItem('user')
   if (savedToken && savedUser) {
     token.value = savedToken
     user.value = JSON.parse(savedUser)
     isLoggedIn.value = true
-    currentView.value = 'todos'
     fetchTodos()
   }
 })
@@ -52,7 +33,6 @@ onMounted(() => {
 async function apiRequest(url, options = {}) {
   loading.value = true
   error.value = ''
-  success.value = ''
   try {
     const headers = {
       'Content-Type': 'application/json',
@@ -85,7 +65,7 @@ async function apiRequest(url, options = {}) {
 // 注册
 async function register() {
   try {
-    const data = await apiRequest('/register', {
+    const data = await apiRequest('/api/register', {
       method: 'POST',
       body: JSON.stringify({ email: email.value, password: password.value })
     })
@@ -95,7 +75,6 @@ async function register() {
     localStorage.setItem('token', data.token)
     localStorage.setItem('user', JSON.stringify(data.user))
     isLoggedIn.value = true
-    currentView.value = 'todos'
     email.value = ''
     password.value = ''
     fetchTodos()
@@ -107,7 +86,7 @@ async function register() {
 // 登录
 async function login() {
   try {
-    const data = await apiRequest('/login', {
+    const data = await apiRequest('/api/login', {
       method: 'POST',
       body: JSON.stringify({ email: email.value, password: password.value })
     })
@@ -117,51 +96,11 @@ async function login() {
     localStorage.setItem('token', data.token)
     localStorage.setItem('user', JSON.stringify(data.user))
     isLoggedIn.value = true
-    currentView.value = 'todos'
     email.value = ''
     password.value = ''
     fetchTodos()
   } catch (err) {
     console.error('登录失败:', err)
-  }
-}
-
-// 忘记密码
-async function forgotPassword() {
-  try {
-    const data = await apiRequest('/forgot-password', {
-      method: 'POST',
-      body: JSON.stringify({ email: email.value })
-    })
-    success.value = data.message
-    email.value = ''
-  } catch (err) {
-    console.error('发送重置邮件失败:', err)
-  }
-}
-
-// 重置密码
-async function resetPassword() {
-  if (password.value !== confirmPassword.value) {
-    error.value = '两次密码输入不一致'
-    return
-  }
-  
-  try {
-    const data = await apiRequest('/reset-password', {
-      method: 'POST',
-      body: JSON.stringify({ token: resetToken.value, password: password.value })
-    })
-    success.value = data.message + '，3秒后跳转到登录页面...'
-    setTimeout(() => {
-      currentView.value = 'auth'
-      window.history.pushState({}, '', window.location.pathname)
-      password.value = ''
-      confirmPassword.value = ''
-      resetToken.value = ''
-    }, 3000)
-  } catch (err) {
-    console.error('重置密码失败:', err)
   }
 }
 
@@ -171,7 +110,6 @@ function logout() {
   user.value = null
   todos.value = []
   isLoggedIn.value = false
-  currentView.value = 'auth'
   localStorage.removeItem('token')
   localStorage.removeItem('user')
 }
@@ -179,7 +117,7 @@ function logout() {
 // 获取待办列表
 async function fetchTodos() {
   try {
-    const data = await apiRequest('/todos')
+    const data = await apiRequest('/api/todos')
     todos.value = data
   } catch (err) {
     console.error('获取待办失败:', err)
@@ -191,7 +129,7 @@ async function addTodo() {
   if (!newTodo.value.trim()) return
   
   try {
-    const todo = await apiRequest('/todos', {
+    const todo = await apiRequest('/api/todos', {
       method: 'POST',
       body: JSON.stringify({ text: newTodo.value.trim() })
     })
@@ -208,7 +146,7 @@ async function toggleTodo(todo) {
   const newCompleted = todo.completed ? 0 : 1
   
   try {
-    const updated = await apiRequest(`/todos/${todo.id}`, {
+    const updated = await apiRequest(`/api/todos/${todo.id}`, {
       method: 'PUT',
       body: JSON.stringify({ text: todo.text, completed: newCompleted })
     })
@@ -225,7 +163,7 @@ async function toggleTodo(todo) {
 // 删除待办
 async function deleteTodo(id) {
   try {
-    await apiRequest(`/todos/${id}`, {
+    await apiRequest(`/api/todos/${id}`, {
       method: 'DELETE'
     })
     
@@ -245,8 +183,8 @@ const stats = computed(() => ({
 
 <template>
   <div id="app">
-    <!-- 登录/注册页面 -->
-    <div v-if="currentView === 'auth'" class="container auth-container">
+    <!-- 未登录 - 显示登录/注册表单 -->
+    <div v-if="!isLoggedIn" class="container auth-container">
       <h1>📝 Simple Todo</h1>
       
       <div class="auth-tabs">
@@ -291,94 +229,11 @@ const stats = computed(() => ({
         >
           {{ loading ? '处理中...' : (showLogin ? '登录' : '注册') }}
         </button>
-
-        <div v-if="showLogin" class="forgot-password">
-          <button 
-            type="button" 
-            @click="currentView = 'forgot-password'" 
-            class="link-btn"
-          >
-            忘记密码？
-          </button>
-        </div>
       </form>
     </div>
 
-    <!-- 忘记密码页面 -->
-    <div v-else-if="currentView === 'forgot-password'" class="container auth-container">
-      <h1>🔐 重置密码</h1>
-      <p class="hint-text">请输入您的注册邮箱，我们将发送重置密码链接到您的邮箱。</p>
-
-      <form @submit.prevent="forgotPassword" class="auth-form">
-        <input
-          v-model="email"
-          type="email"
-          placeholder="邮箱"
-          required
-          class="auth-input"
-        />
-        
-        <div v-if="error" class="error-msg">{{ error }}</div>
-        <div v-if="success" class="success-msg">{{ success }}</div>
-        
-        <button 
-          type="submit" 
-          class="auth-btn"
-          :disabled="loading"
-        >
-          {{ loading ? '发送中...' : '发送重置链接' }}
-        </button>
-
-        <div class="back-to-login">
-          <button 
-            type="button" 
-            @click="currentView = 'auth'" 
-            class="link-btn"
-          >
-            ← 返回登录
-          </button>
-        </div>
-      </form>
-    </div>
-
-    <!-- 重置密码页面 -->
-    <div v-else-if="currentView === 'reset-password'" class="container auth-container">
-      <h1>🔑 设置新密码</h1>
-      <p class="hint-text">请输入您的新密码</p>
-
-      <form @submit.prevent="resetPassword" class="auth-form">
-        <input
-          v-model="password"
-          type="password"
-          placeholder="新密码"
-          required
-          minlength="6"
-          class="auth-input"
-        />
-        <input
-          v-model="confirmPassword"
-          type="password"
-          placeholder="确认新密码"
-          required
-          minlength="6"
-          class="auth-input"
-        />
-        
-        <div v-if="error" class="error-msg">{{ error }}</div>
-        <div v-if="success" class="success-msg">{{ success }}</div>
-        
-        <button 
-          type="submit" 
-          class="auth-btn"
-          :disabled="loading"
-        >
-          {{ loading ? '重置中...' : '重置密码' }}
-        </button>
-      </form>
-    </div>
-
-    <!-- 待办列表页面 -->
-    <div v-else-if="currentView === 'todos'" class="container">
+    <!-- 已登录 - 显示待办列表 -->
+    <div v-else class="container">
       <div class="header">
         <h1>📝 Todo List</h1>
         <div class="user-info">
@@ -470,13 +325,6 @@ h1 {
   color: #333;
   margin-bottom: 30px;
   font-size: 2.5rem;
-}
-
-.hint-text {
-  text-align: center;
-  color: #666;
-  margin-bottom: 20px;
-  font-size: 14px;
 }
 
 .header {
@@ -571,25 +419,6 @@ h1 {
   cursor: not-allowed;
 }
 
-.forgot-password, .back-to-login {
-  text-align: center;
-  margin-top: 10px;
-}
-
-.link-btn {
-  background: none;
-  border: none;
-  color: #667eea;
-  cursor: pointer;
-  font-size: 14px;
-  text-decoration: underline;
-  padding: 0;
-}
-
-.link-btn:hover {
-  color: #5568d3;
-}
-
 .input-section {
   display: flex;
   gap: 10px;
@@ -647,14 +476,7 @@ h1 {
   color: #d63031;
   border-radius: 6px;
   font-size: 14px;
-}
-
-.success-msg {
-  padding: 10px;
-  background: #e6ffe6;
-  color: #27ae60;
-  border-radius: 6px;
-  font-size: 14px;
+  margin-bottom: 15px;
 }
 
 .todo-list {
